@@ -2,7 +2,11 @@
 CIFAR-10 で ViT を学習するスクリプト
 
 使い方:
+    # 新規学習
     python train.py [--epochs 30] [--batch-size 128] [--lr 1e-3]
+
+    # チェックポイントから再開
+    python train.py --epochs 50 --resume best_vit.pth --start-epoch 30
 
 学習レシピ:
     - Optimizer : AdamW (weight_decay=0.05)
@@ -37,6 +41,10 @@ parser.add_argument("--num-heads",   type=int,   default=8)
 parser.add_argument("--mlp-dim",     type=int,   default=512)
 parser.add_argument("--dropout",     type=float, default=0.1)
 parser.add_argument("--save",        type=str,   default="best_vit.pth")
+parser.add_argument("--resume",      type=str,   default=None,
+                    help="再開するチェックポイントのパス")
+parser.add_argument("--start-epoch", type=int,   default=0,
+                    help="再開エポック番号（--resume と併用）")
 args = parser.parse_args()
 
 # ─── デバイス選択 ─────────────────────────────────────────────────────────────
@@ -90,6 +98,21 @@ print(f"Config: embed_dim={args.embed_dim}, depth={args.depth}, "
       f"heads={args.num_heads}, mlp_dim={args.mlp_dim}")
 print(f"Epochs: {args.epochs}, batch_size: {args.batch_size}, lr: {args.lr}\n")
 
+# ─── チェックポイント再開 ─────────────────────────────────────────────────────
+best_acc = 0.0
+if args.resume:
+    model.load_state_dict(torch.load(args.resume, map_location=DEVICE))
+    print(f"Loaded checkpoint: {args.resume}")
+    # 再開時の精度を測定して best_acc の初期値にする
+    model.eval()
+    resume_correct = 0
+    with torch.no_grad():
+        for imgs, labels in test_loader:
+            imgs, labels = imgs.to(DEVICE), labels.to(DEVICE)
+            resume_correct += (model(imgs).argmax(1) == labels).sum().item()
+    best_acc = resume_correct / len(test_ds) * 100
+    print(f"Resume base accuracy: {best_acc:.2f}%\n")
+
 # ─── 損失・最適化・スケジューラ ──────────────────────────────────────────────
 criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
 optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
@@ -103,10 +126,15 @@ def lr_lambda(epoch: int) -> float:
     progress = (epoch - args.warmup_epochs) / max(1, args.epochs - args.warmup_epochs)
     return 0.5 * (1.0 + math.cos(math.pi * progress))
 
-scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+# last_epoch >= 0 で再開する場合、スケジューラは param_groups に initial_lr を要求する
+if args.start_epoch > 0:
+    for group in optimizer.param_groups:
+        group.setdefault("initial_lr", args.lr)
+
+scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda,
+                                        last_epoch=args.start_epoch - 1)
 
 # ─── 学習ループ ───────────────────────────────────────────────────────────────
-best_acc = 0.0
 header = (
     f"{'Epoch':>6} | {'LR':>8} | "
     f"{'Train Loss':>10} {'Train Acc':>10} | "
@@ -115,7 +143,7 @@ header = (
 print(header)
 print("─" * len(header))
 
-for epoch in range(1, args.epochs + 1):
+for epoch in range(args.start_epoch + 1, args.epochs + 1):
     t0 = time.time()
 
     # ── Train ────────────────────────────────────────────────────────────
