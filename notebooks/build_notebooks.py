@@ -28,6 +28,14 @@ import sys, pathlib
 # notebooks/ の親（vit/）を Python パスに追加して vit パッケージを import できるようにする
 sys.path.insert(0, str(pathlib.Path.cwd().parent))
 
+import matplotlib
+import matplotlib.font_manager as _fm
+# macOS 標準の日本語フォントを自動検出して設定（なければ DejaVu にフォールバック）
+_jp = next((f.name for f in _fm.fontManager.ttflist if "Hiragino Sans" == f.name), None)
+if _jp:
+    matplotlib.rcParams["font.family"] = _jp
+matplotlib.rcParams["axes.unicode_minus"] = False  # マイナス記号の文字化け防止
+
 import torch
 import torchvision
 import torchvision.transforms as T
@@ -396,7 +404,7 @@ for k, v in attn_store.items():
 LAYER = DEPTH - 1  # 最終層
 attn = attn_store[f"layer_{LAYER}"][0]  # (H, 65, 65) ← バッチ次元を除去
 
-fig, axes = plt.subplots(2, 4, figsize=(14, 7))
+fig, axes = plt.subplots(2, 4, figsize=(14, 7), constrained_layout=True)
 for h, ax in enumerate(axes.flat):
     im = ax.imshow(attn[h].numpy(), cmap="viridis", vmin=0)
     ax.set_title(f"Head {h}", fontsize=10)
@@ -408,8 +416,7 @@ for h, ax in enumerate(axes.flat):
 
 fig.suptitle(f"Layer {LAYER} — 8 ヘッドのアテンションマップ (65×65)\\n"
              f"赤線の左上が CLS token", fontsize=12)
-plt.colorbar(im, ax=axes, fraction=0.015, pad=0.04)
-plt.tight_layout()
+fig.colorbar(im, ax=axes, fraction=0.015, pad=0.04)
 plt.show()
 """),
 
